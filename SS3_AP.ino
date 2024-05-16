@@ -1,32 +1,10 @@
-// #include <Scheduler.h>
+//#include <Scheduler.h>
+
 #include <Arduino.h>
+
 #include <DueTimer.h>
 
-#include <Wire.h>
 
-#include <Adafruit_GFX.h>
-
-#include <Adafruit_SH1106.h>
-
-// #define OLED_SDA 21
-// #define OLED_SCL 22
-// Adafruit_SH1106 display(21, 22);
-// void displayMode() {
-
-//   display.clearDisplay();
-//   display.setTextColor(WHITE);
-//   display.setTextSize(1);
-//   display.setCursor(0, 0);
-//   display.print("Set point : ");
-//   display.print(setPointPessuse);
-//   display.setCursor(0, 15);
-//   display.print("Pressure : ");
-//   display.print(pressure);
-//   display.setCursor(0, 30);
-//   display.print("Speed : ");
-//   display.print(frequency);
-//   display.display();
-// }
 // Khai bao bien PID
 int status = 0;
 const float kp = 2;
@@ -51,7 +29,8 @@ float setPointPressuse = 0;
 //Khai bao chan Valve
 const int val1 = 6;
 const int val2 = 5;
-const int deltaP = 30;
+const int deltaP = 1;
+
 // Ham cap nhat trang thai chan pulse
 void togglePin() {
   state = !state;                  // Đảo trạng thái
@@ -64,33 +43,43 @@ void setpoint() {
     if (setPointPressuse > 100) {
       setPointPressuse = 100;
     }
-    Serial.print("\n");
-    Serial.print("Set Point Pressuse: ");
-    Serial.println(setPointPressuse);  // In số float đã nhận được
+    // Serial.print("\n");
+    // Serial.print("Set Point Pressuse: ");
+    // Serial.println(setPointPressuse);  // In số float đã nhận được
   }
 }
 // Hàm cập nhật áp suất theo thời gian
 void callPressure() {
   setpoint();
   //Gửi yêu cầu tới thiết bị
-  Serial.println("Request: ");
+  //Serial.println("Request: ");
   Serial1.write("#*?");
   Serial1.write(13);
   String incomingChar = "";
   delay(8);                       // thời gian nhỏ nhất 8ms
   if (Serial1.available() > 0) {  // Kiểm tra xem có dữ liệu nào được gửi đến không
     incomingChar = Serial1.readString();
-    Serial.println(incomingChar);
+    //Serial.println(incomingChar);
     String data = "       ";
     for (int i = 0; i < incomingChar.length(); i++) {
       data[i] = incomingChar[i + 4];
     }
     pressure = data.toFloat();
-    Serial.println("Pressure: ");
-    Serial.println(pressure, 4);
+    // Serial.println("Pressure: ");
+    // Serial.println(pressure, 4);
     error = setPointPressuse - pressure;
     Serial.println(error);
   }
+}
+//Hàm hiển thị serial
+void dataSerial() {
+  Serial.println(pressure, 4);
+  Serial.println(",");
+  Serial.println(setPointPressuse, 4);
+  Serial.println(",");
+  Serial.println(frequency, 4);  //tỷ lệ với v
+  Serial.println(",");
+  Serial.println(error, 4);
 }
 // Hàm điều khiển van
 
@@ -98,12 +87,12 @@ void callPressure() {
 void PID() {
   callPressure();
   error = setPointPressuse - pressure;
-  Serial.println("error");
-  Serial.println(error);
+  //   Serial.println("error");
+  //   Serial.println(error);
   if (error > 0) {
-    digitalWrite(pin_direct, 0);  // hướng quay thuận
+    digitalWrite(pin_direct, LOW);  // hướng quay thuận
   } else {
-    digitalWrite(pin_direct, 1);  // hướng quay nghịch
+    digitalWrite(pin_direct, HIGH);  // hướng quay nghịch
   }
   error = abs(error);
   P = error * kp;
@@ -141,51 +130,52 @@ void setup() {
   while (setPointPressuse == 0) {
     setpoint();
   }
-  digitalWrite(val2, 0);
-//  display.clearDisplay();
-  //display.begin(SH1106_SWITCHCAPVCC, 0x3C);  // initialize with the I2C addr 0x3D
-  //display.display();
+  digitalWrite(val2, 0);  //van2 đóng
+  callPressure();
 }
 //void updateSetpoint() {}
 void loop() {
-  //displayMode();
-  Serial.println("loop");
+  dataSerial();
   setpoint();
   if (pressure == setPointPressuse) {
     callPressure();
     digitalWrite(val1, 0);  // ngat bom AC
     digitalWrite(val2, 0);
+    dataSerial();
   }
-  if (deltaP < setPointPressuse - pressure) {
-    while (1) {
-      callPressure();
-      //displayMode();
-      digitalWrite(val1, 1);  // ngat bom AC
+  if (pressure > setPointPressuse) {  // nếu áp lớn hơn setpoint => xả van 2
+    digitalWrite(val2, 1);            // mở van 2
+    callPressure();
+    if (int(pressure) == int(setPointPressuse)) {
       digitalWrite(val2, 0);
-      Serial.println("AC on");
-      if (pressure == setPointPressuse) {
-        Serial.println("AC off");
-        digitalWrite(val1, 0);  // ngat bom AC
-        break;
-      }
+      break;
     }
-  } else {
-    while (1) {
-      //displayMode();
-      if (pressure > setPointPressuse) {
-        digitalWrite(val2, 1);
+  }
+  if (pressure < setPointPressuse) {
+    //nếu delta P(độ điều chỉnh pittong) nhỏ hơn sai lệch thì dùng bơm AC
+    if (deltaP < setPointPressuse - pressure) {
+      digitalWrite(val1, 1);  // mở van 1
+      digitalWrite(val2, 0);  // đóng van 2
+      while (1) {
         callPressure();
-        if (int(pressure) == int(setPointPressuse)) {
-          digitalWrite(val2, 0);
+        dataSerial();
+        //Serial.println("AC on");
+        if (pressure == setPointPressuse) {
+          //Serial.println("AC off");
+          digitalWrite(val1, 0);  // ngat bom AC + đóng van 1
           break;
         }
-      } else {
+      }
+    } else {
+      //nếu độ điều chỉnh của pittong có thể điều chỉnh được thì chạy servor thì cho servo chạy tiến để tăng áp
+      while (1) {
+        dataSerial();
         PID();
-        digitalWrite(val2, 0);  //khoas van
+        digitalWrite(val2, 0);  //khoas van 2
         if (pressure == setPointPressuse) {
           break;
         }
-      }
-    }
-  }
-}
+      }//end while
+    }//end else
+  }//end if - p< pset
+}//end loop
